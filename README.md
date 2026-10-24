@@ -103,8 +103,56 @@ Open your browser at `http://localhost:8501`.
 
 ---
 
-## 📊 Dataset
+## 📊 Dataset Setup (BreaKHis)
 
-This project uses the **BreaKHis** (Breast Cancer Histopathological Image Classification) dataset.
-- The pre-computed feature representations (`features_fused.csv`, `features_glcm.csv`, `features_lbp.csv`) and trained models (`outputs/models/`) are already included in this repository, so you can run the web app and evaluation scripts immediately without downloading the gigabyte-scale raw image dataset.
-- If you wish to extract features from scratch, download BreaKHis and place it in `dataset/BreaKHis_v1/`.
+This project uses the **BreaKHis** (Breast Cancer Histopathological Image Classification) dataset (~4.1 GB, 7,909 images across 40X, 100X, 200X, and 400X magnifications).
+
+Because of GitHub's repository size limits, the raw image folder (`dataset/`) is excluded from Git. Follow these steps to add the dataset:
+
+### Step 1: Download the Dataset
+Download BreaKHis from either of these sources:
+- **Kaggle**: [ambarish/breakhis](https://www.kaggle.com/datasets/ambarish/breakhis)
+  - Quick download using Kaggle CLI:
+    ```bash
+    kaggle datasets download -d ambarish/breakhis -p dataset/ --unzip
+    ```
+- **Official Laboratory**: [UFPR BreaKHis Database](https://web.inf.ufpr.br/vri/databases/breast-cancer-histopathological-database-breakhis/)
+
+### Step 2: Extract & Place the Files
+Extract the archive directly into the `dataset/` folder so the directory structure is:
+
+```text
+ML-Project/
+└── dataset/
+    └── BreaKHis_v1/
+        └── histology_slides/
+            └── breast/
+                ├── benign/
+                │   └── SOB/
+                │       ├── adenosis/
+                │       ├── fibroadenoma/
+                │       ├── phyllodes_tumor/
+                │       └── tubular_adenoma/
+                └── malignant/
+                    └── SOB/
+                        ├── ductal_carcinoma/
+                        ├── lobular_carcinoma/
+                        ├── mucinous_carcinoma/
+                        └── papillary_carcinoma/
+```
+
+### Step 3: Run the Full Pipeline with the Dataset
+Once the dataset is placed inside `dataset/BreaKHis_v1/`:
+1. **Explore the dataset & visualize slides**:
+   Open and run [`notebooks/01_dataset_exploration.ipynb`](notebooks/01_dataset_exploration.ipynb).
+2. **Re-extract GLCM and LBP features**:
+   ```bash
+   python src/extract_features.py
+   ```
+3. **Train classifiers or run the app**:
+   ```bash
+   python src/train_models.py
+   streamlit run app.py
+   ```
+
+> **Note:** The extracted feature CSVs (`features_fused.csv`, `features_glcm.csv`, `features_lbp.csv`, `metadata.csv`) and trained model weights (`outputs/models/`) are already provided in this repository, so the web application and evaluation benchmarks can also run immediately even before downloading the full 4.1 GB raw image archive.
