@@ -1,0 +1,13 @@
+patient_id,class_name,label,subtype,n_images
+SOB_M_DC_14-17901,malignant,1,ductal_carcinoma,104
+SOB_M_DC_14-13993,malignant,1,ductal_carcinoma,145
+SOB_M_DC_14-2773,malignant,1,ductal_carcinoma,144
+SOB_M_LC_14-15570C,malignant,1,lobular_carcinoma,125
+SOB_B_TA_14-3411F,benign,0,tubular_adenoma,66
+SOB_M_DC_14-16336,malignant,1,ductal_carcinoma,60
+SOB_B_F_14-23222AB,benign,0,fibroadenoma,68
+SOB_B_TA_14-16184CD,benign,0,tubular_adenoma,124
+SOB_M_DC_14-20636,malignant,1,ductal_carcinoma,111
+SOB_M_LC_14-12204,malignant,1,lobular_carcinoma,103
+SOB_M_DC_14-15696,malignant,1,ductal_carcinoma,83
+SOB_M_DC_14-8168,malignant,1,ductal_carcinoma,38

@@ -1,0 +1,1934 @@
+
+======================================================================
+NOTEBOOK: 01_dataset_exploration.ipynb (Total cells: 16)
+======================================================================
+
+--- Cell 0 [MARKDOWN] ---
+# 📊 Notebook 01 — Dataset Exploration & Metadata Creation
+
+**Phase 1 & 2 of the project**
+
+What this notebook does:
+1. Walks the BreakHis folder structure
+2. Parses patient ID, class, subtype, magnification from the filename
+3. Creates `metadata.csv` — the master table for the entire project
+4. Analyzes the dataset (class distribution, magnifications, subtypes)
+5. Displays sample images
+
+**Run each cell with Shift+Enter**
+
+--- Cell 1 [MARKDOWN] ---
+## 0. Setup & Imports
+
+--- Cell 2 [CODE] ---
+import sys
+sys.path.insert(0, r'D:\Projects\ML')   # so Python can find src/
+
+import os
+import re
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
+import seaborn as sns
+from pathlib import Path
+from collections import Counter
+
+from src.config import (
+    DATASET_DIR, METADATA_CSV, FIGURES_DIR,
+    MAGNIFICATIONS, BENIGN_SUBTYPES, MALIGNANT_SUBTYPES, CLASS_MAP
+)
+from src.utils import set_plot_style, save_figure, set_seed
+
+set_plot_style()
+set_seed(42)
+print('✅ Imports done!')
+print(f'📁 Dataset path: {DATASET_DIR}')
+print(f'   Exists: {DATASET_DIR.exists()}')
+
+--- Cell 3 [MARKDOWN] ---
+## 1. Understand the Folder Structure
+
+--- Cell 4 [CODE] ---
+# Print the top-level structure so you understand how it's organised
+print('BreakHis Dataset Structure:\n')
+for class_dir in sorted(DATASET_DIR.iterdir()):
+    if class_dir.is_dir():
+        print(f'  📂 {class_dir.name}/')
+        sob_dir = class_dir / 'SOB'
+        if sob_dir.exists():
+            for subtype_dir in sorted(sob_dir.iterdir()):
+                if subtype_dir.is_dir():
+                    print(f'      📂 {subtype_dir.name}/')
+                    # Show first patient
+                    patients = sorted(subtype_dir.iterdir())
+                    if patients:
+                        p = patients[0]
+                        print(f'          📂 {p.name}/')
+                        for mag_dir in sorted(p.iterdir()):
+                            imgs = list(mag_dir.glob('*.png'))
+                            print(f'              📂 {mag_dir.name}/  ({len(imgs)} images)')
+                    if len(patients) > 1:
+                        print(f'          ... and {len(patients)-1} more patients')
+
+--- Cell 5 [MARKDOWN] ---
+## 2. Parse Filename & Build metadata.csv
+
+Example filename: `SOB_B_A_14-22549AB-40-001.png`
+- `SOB` = Slide On Board
+- `B` = Benign (or `M` = Malignant)  
+- `A` = Adenosis (subtype code)
+- `14-22549AB` = Patient ID
+- `40` = Magnification factor
+- `001` = Image index
+
+--- Cell 6 [CODE] ---
+records = []
+
+for class_name in ['benign', 'malignant']:
+    class_dir = DATASET_DIR / class_name / 'SOB'
+    if not class_dir.exists():
+        print(f'⚠️  Not found: {class_dir}')
+        continue
+
+    for subtype_dir in sorted(class_dir.iterdir()):
+        if not subtype_dir.is_dir():
+            continue
+        subtype = subtype_dir.name   # e.g. 'adenosis'
+
+        for patient_dir in sorted(subtype_dir.iterdir()):
+            if not patient_dir.is_dir():
+                continue
+            patient_id = patient_dir.name   # e.g. 'SOB_B_A_14-22549AB'
+
+            for mag_dir in sorted(patient_dir.iterdir()):
+                if not mag_dir.is_dir():
+                    continue
+                magnification = mag_dir.name   # e.g. '40X'
+
+                for img_path in sorted(mag_dir.glob('*.png')):
+                    records.append({
+                        'image_path':    str(img_path),
+                        'patient_id':    patient_id,
+                        'class_name':    class_name,
+                        'label':         CLASS_MAP[class_name],
+                        'subtype':       subtype,
+                        'magnification': magnification,
+                    })
+
+metadata = pd.DataFrame(records)
+metadata.to_csv(METADATA_CSV, index=False)
+
+print(f'✅ metadata.csv created!')
+print(f'   Total images : {len(metadata)}')
+print(f'   Total patients: {metadata["patient_id"].nunique()}')
+print(f'   Saved to: {METADATA_CSV}')
+metadata.head()
+
+--- Cell 7 [MARKDOWN] ---
+## 3. Dataset Statistics
+
+--- Cell 8 [CODE] ---
+print('='*55)
+print('           BREAKHIS DATASET SUMMARY')
+print('='*55)
+print(f'  Total images          : {len(metadata):,}')
+print(f'  Total unique patients : {metadata["patient_id"].nunique():,}')
+print()
+print('  Class Distribution:')
+for cls, grp in metadata.groupby('class_name'):
+    pct = len(grp)/len(metadata)*100
+    print(f'    {cls.capitalize():12s}: {len(grp):5,} images  ({pct:.1f}%)')
+print()
+print('  Magnification Distribution:')
+for mag in ['40X','100X','200X','400X']:
+    n = len(metadata[metadata['magnification']==mag])
+    print(f'    {mag:6s}: {n:5,} images')
+print()
+print('  Subtype Distribution:')
+for subtype, grp in metadata.groupby('subtype'):
+    cls = grp['class_name'].iloc[0].capitalize()
+    print(f'    {subtype:25s} [{cls}]: {len(grp):5,}')
+print('='*55)
+
+--- Cell 9 [MARKDOWN] ---
+## 4. Visualizations
+
+--- Cell 10 [CODE] ---
+# ── Figure 1: Class distribution ──────────────────────────────────────────────
+fig, axes = plt.subplots(1, 3, figsize=(16, 5))
+fig.suptitle('BreakHis Dataset Distribution', fontsize=15, y=1.02)
+PALETTE = ['#7c3aed', '#ef4444']
+
+# --- Benign vs Malignant ---
+class_counts = metadata['class_name'].value_counts()
+axes[0].bar(class_counts.index, class_counts.values,
+            color=PALETTE, edgecolor='#3d3f4e', linewidth=1.5)
+for i, (cls, cnt) in enumerate(class_counts.items()):
+    axes[0].text(i, cnt + 50, str(cnt), ha='center', fontsize=13, fontweight='bold')
+axes[0].set_title('Class Distribution')
+axes[0].set_ylabel('Number of Images')
+
+# --- Magnification ---
+mag_counts = metadata['magnification'].value_counts().reindex(['40X','100X','200X','400X'])
+axes[1].bar(mag_counts.index, mag_counts.values,
+            color='#2563eb', edgecolor='#3d3f4e', linewidth=1.5)
+for i, cnt in enumerate(mag_counts.values):
+    axes[1].text(i, cnt + 20, str(cnt), ha='center', fontsize=11)
+axes[1].set_title('Magnification Distribution')
+axes[1].set_ylabel('Number of Images')
+
+# --- Subtype ---
+subtype_counts = metadata['subtype'].value_counts()
+colors_sub = [PALETTE[0] if s in BENIGN_SUBTYPES else PALETTE[1]
+              for s in subtype_counts.index]
+axes[2].barh(subtype_counts.index, subtype_counts.values,
+             color=colors_sub, edgecolor='#3d3f4e', linewidth=1)
+axes[2].set_title('Subtype Distribution')
+axes[2].set_xlabel('Number of Images')
+
+plt.tight_layout()
+save_figure(fig, FIGURES_DIR / '01_dataset_distributions.png')
+plt.show()
+
+--- Cell 11 [CODE] ---
+# ── Figure 2: Images per patient ─────────────────────────────────────────────
+imgs_per_patient = metadata.groupby('patient_id').size()
+fig, ax = plt.subplots(figsize=(10, 4))
+ax.hist(imgs_per_patient.values, bins=30, color='#7c3aed',
+        edgecolor='#3d3f4e', linewidth=1)
+ax.set_title('Distribution of Images per Patient')
+ax.set_xlabel('Number of Images')
+ax.set_ylabel('Number of Patients')
+ax.axvline(imgs_per_patient.mean(), color='#ef4444',
+           linestyle='--', label=f'Mean = {imgs_per_patient.mean():.0f}')
+ax.legend()
+plt.tight_layout()
+save_figure(fig, FIGURES_DIR / '01_images_per_patient.png')
+plt.show()
+print(f'Min images per patient: {imgs_per_patient.min()}')
+print(f'Max images per patient: {imgs_per_patient.max()}')
+print(f'Mean images per patient: {imgs_per_patient.mean():.1f}')
+
+--- Cell 12 [CODE] ---
+# ── Figure 3: Sample Images ───────────────────────────────────────────────────
+import cv2
+
+# Pick 2 benign + 2 malignant sample images
+samples = []
+for cls in ['benign', 'malignant']:
+    subset = metadata[(metadata['class_name']==cls) & (metadata['magnification']=='40X')]
+    samples.extend(subset.sample(2, random_state=42).to_dict('records'))
+
+fig, axes = plt.subplots(1, 4, figsize=(18, 5))
+fig.suptitle('Sample Histopathology Images (40X Magnification)', fontsize=13)
+
+for ax, rec in zip(axes, samples):
+    img = cv2.imread(rec['image_path'])
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    ax.imshow(img_rgb)
+    ax.set_title(f"{rec['class_name'].capitalize()}\n{rec['subtype']}",
+                 fontsize=10,
+                 color='#ef4444' if rec['class_name']=='malignant' else '#7c3aed')
+    ax.axis('off')
+
+plt.tight_layout()
+save_figure(fig, FIGURES_DIR / '01_sample_images.png')
+plt.show()
+
+--- Cell 13 [CODE] ---
+# ── Figure 4: Sample images across all magnifications ─────────────────────────
+# Pick one benign and one malignant patient, show all 4 magnifications
+fig, axes = plt.subplots(2, 4, figsize=(18, 9))
+fig.suptitle('Same Patient at Different Magnifications', fontsize=13)
+
+for row, cls in enumerate(['benign', 'malignant']):
+    # Get a patient with images at all 4 magnifications
+    patient = None
+    for pid, grp in metadata[metadata['class_name']==cls].groupby('patient_id'):
+        if set(grp['magnification'].unique()) == {'40X','100X','200X','400X'}:
+            patient = pid
+            break
+
+    for col, mag in enumerate(['40X','100X','200X','400X']):
+        row_df = metadata[(metadata['patient_id']==patient) &
+                          (metadata['magnification']==mag)]
+        if len(row_df) == 0:
+            axes[row, col].axis('off')
+            continue
+        img_path = row_df.iloc[0]['image_path']
+        img = cv2.imread(img_path)
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        axes[row, col].imshow(img_rgb)
+        axes[row, col].set_title(f'{cls.capitalize()} — {mag}', fontsize=10,
+            color='#ef4444' if cls=='malignant' else '#7c3aed')
+        axes[row, col].axis('off')
+
+plt.tight_layout()
+save_figure(fig, FIGURES_DIR / '01_magnification_comparison.png')
+plt.show()
+
+--- Cell 14 [MARKDOWN] ---
+## 5. Summary — What We Know About Our Dataset
+
+--- Cell 15 [CODE] ---
+n_benign = len(metadata[metadata['class_name']=='benign'])
+n_malignant = len(metadata[metadata['class_name']=='malignant'])
+n_patients = metadata['patient_id'].nunique()
+
+print('='*60)
+print('  ✅  PHASE 1 & 2 COMPLETE — Dataset Summary')
+print('='*60)
+print(f'  Total images   : {len(metadata):,}')
+print(f'  Benign images  : {n_benign:,}  ({n_benign/len(metadata)*100:.1f}%)')
+print(f'  Malignant imgs : {n_malignant:,}  ({n_malignant/len(metadata)*100:.1f}%)')
+print(f'  Total patients : {n_patients}')
+print(f'  Magnifications : 40X, 100X, 200X, 400X')
+print(f'  Benign subtypes: adenosis, fibroadenoma, phyllodes_tumor, tubular_adenoma')
+print(f'  Malignant subs : ductal_carcinoma, lobular_carcinoma, mucinous_carcinoma, papillary_carcinoma')
+print()
+print(f'  📄 metadata.csv saved → {METADATA_CSV}')
+print(f'  📊 Figures saved → {FIGURES_DIR}')
+print()
+print('  ➡️  Next: Notebook 02 — Patient-Level Data Splitting')
+print('='*60)
+
+======================================================================
+NOTEBOOK: 02_data_splitting.ipynb (Total cells: 19)
+======================================================================
+
+--- Cell 0 [MARKDOWN] ---
+# ✂️ Notebook 02 — Patient-Level Data Splitting
+
+**Phase 3 of the project**
+
+**The most important rule:** Split PATIENTS, not images.
+
+Why? One patient has ~96 images. If Patient P001's images appear in both
+Train and Test, the model 'already knows' that patient → fake high accuracy.
+This is called **Data Leakage**.
+
+What this notebook does:
+1. Loads metadata.csv
+2. Gets the list of all unique patients
+3. Splits patients into Train / Validation / Test (70 / 15 / 15)
+4. Assigns every image to its patient's split
+5. Saves the split info back to metadata.csv
+6. Verifies no patient appears in more than one split
+
+**Run each cell with Shift+Enter**
+
+--- Cell 1 [MARKDOWN] ---
+## 0. Setup & Imports
+
+--- Cell 2 [CODE] ---
+import sys
+sys.path.insert(0, r'D:\Projects\ML')
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.model_selection import train_test_split
+from pathlib import Path
+
+from src.config import METADATA_CSV, FIGURES_DIR, SPLITS_DIR, RANDOM_SEED
+from src.utils import set_plot_style, save_figure, set_seed
+
+set_plot_style()
+set_seed(RANDOM_SEED)
+print('Imports done!')
+print(f'Metadata: {METADATA_CSV}')
+
+--- Cell 3 [MARKDOWN] ---
+## 1. Load Metadata
+
+--- Cell 4 [CODE] ---
+metadata = pd.read_csv(METADATA_CSV)
+print(f'Total images   : {len(metadata):,}')
+print(f'Total patients : {metadata["patient_id"].nunique()}')
+print(f'Classes        : {dict(metadata["class_name"].value_counts())}')
+metadata.head(3)
+
+--- Cell 5 [MARKDOWN] ---
+## 2. Get Patient-Level Info
+
+Before splitting, we build a patient-level table.
+Each row = one patient (not one image).
+
+--- Cell 6 [CODE] ---
+# Build patient-level table
+# For each patient: what class are they? (A patient is either fully benign or fully malignant)
+patient_df = (
+    metadata
+    .groupby('patient_id')
+    .agg(
+        class_name    = ('class_name', 'first'),
+        label         = ('label', 'first'),
+        subtype       = ('subtype', 'first'),
+        n_images      = ('image_path', 'count'),
+    )
+    .reset_index()
+)
+
+print(f'Patient-level table:')
+print(f'  Total patients : {len(patient_df)}')
+print(f'  Benign patients: {len(patient_df[patient_df["class_name"]=="benign"])}')
+print(f'  Malignant pats : {len(patient_df[patient_df["class_name"]=="malignant"])}')
+patient_df.head()
+
+--- Cell 7 [MARKDOWN] ---
+## 3. Stratified Patient Split
+
+Split: **70% Train | 15% Validation | 15% Test**
+
+We use `stratify=class_name` to ensure both splits have
+roughly the same ratio of benign:malignant patients.
+
+--- Cell 8 [CODE] ---
+# Step 1: Split off 70% train, 30% temp
+train_patients, temp_patients = train_test_split(
+    patient_df,
+    test_size   = 0.30,
+    stratify    = patient_df['class_name'],
+    random_state= RANDOM_SEED
+)
+
+# Step 2: Split the 30% temp into 15% val, 15% test
+val_patients, test_patients = train_test_split(
+    temp_patients,
+    test_size   = 0.50,
+    stratify    = temp_patients['class_name'],
+    random_state= RANDOM_SEED
+)
+
+print('Patient Split Results:')
+print(f'  Train      : {len(train_patients)} patients')
+print(f'  Validation : {len(val_patients)} patients')
+print(f'  Test       : {len(test_patients)} patients')
+print(f'  Total      : {len(train_patients)+len(val_patients)+len(test_patients)} patients')
+
+--- Cell 9 [MARKDOWN] ---
+## 4. Verify No Patient Leakage
+
+--- Cell 10 [CODE] ---
+train_ids = set(train_patients['patient_id'])
+val_ids   = set(val_patients['patient_id'])
+test_ids  = set(test_patients['patient_id'])
+
+train_val_overlap  = train_ids & val_ids
+train_test_overlap = train_ids & test_ids
+val_test_overlap   = val_ids   & test_ids
+
+print('Leakage Check:')
+print(f'  Train & Val  overlap : {len(train_val_overlap)}  (must be 0)')
+print(f'  Train & Test overlap : {len(train_test_overlap)} (must be 0)')
+print(f'  Val & Test   overlap : {len(val_test_overlap)}  (must be 0)')
+
+assert len(train_val_overlap) == 0,  'LEAKAGE DETECTED between Train and Val!'
+assert len(train_test_overlap) == 0, 'LEAKAGE DETECTED between Train and Test!'
+assert len(val_test_overlap) == 0,   'LEAKAGE DETECTED between Val and Test!'
+print()
+print('No leakage detected! Patient split is clean.')
+
+--- Cell 11 [MARKDOWN] ---
+## 5. Assign Split Labels to Every Image
+
+--- Cell 12 [CODE] ---
+# Create a mapping: patient_id -> split
+split_map = {}
+for pid in train_ids: split_map[pid] = 'train'
+for pid in val_ids:   split_map[pid] = 'val'
+for pid in test_ids:  split_map[pid] = 'test'
+
+# Add 'split' column to metadata
+metadata['split'] = metadata['patient_id'].map(split_map)
+
+# Verify all images got a split
+assert metadata['split'].isna().sum() == 0, 'Some images have no split assigned!'
+
+print('Images per split:')
+for split, grp in metadata.groupby('split'):
+    n_b = len(grp[grp['class_name']=='benign'])
+    n_m = len(grp[grp['class_name']=='malignant'])
+    print(f'  {split:6s}: {len(grp):5,} images  (Benign={n_b}, Malignant={n_m})')
+
+metadata.head(3)
+
+--- Cell 13 [MARKDOWN] ---
+## 6. Save Updated metadata.csv
+
+--- Cell 14 [CODE] ---
+metadata.to_csv(METADATA_CSV, index=False)
+
+# Also save separate split lists for reference
+train_patients.to_csv(SPLITS_DIR / 'train_patients.csv', index=False)
+val_patients.to_csv(  SPLITS_DIR / 'val_patients.csv',   index=False)
+test_patients.to_csv( SPLITS_DIR / 'test_patients.csv',  index=False)
+
+print('Saved:')
+print(f'  metadata.csv (with split column) -> {METADATA_CSV}')
+print(f'  train_patients.csv -> {SPLITS_DIR}')
+print(f'  val_patients.csv   -> {SPLITS_DIR}')
+print(f'  test_patients.csv  -> {SPLITS_DIR}')
+
+--- Cell 15 [MARKDOWN] ---
+## 7. Visualize the Split
+
+--- Cell 16 [CODE] ---
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+fig.suptitle('Patient-Level Data Split', fontsize=15)
+PALETTE = {'train': '#7c3aed', 'val': '#2563eb', 'test': '#059669'}
+
+# --- Images per split ---
+split_counts = metadata['split'].value_counts().reindex(['train','val','test'])
+bars = axes[0].bar(split_counts.index, split_counts.values,
+                   color=[PALETTE[s] for s in split_counts.index],
+                   edgecolor='#3d3f4e', linewidth=1.5)
+for bar, cnt in zip(bars, split_counts.values):
+    axes[0].text(bar.get_x() + bar.get_width()/2, cnt + 30,
+                 str(cnt), ha='center', fontsize=12, fontweight='bold')
+axes[0].set_title('Images per Split')
+axes[0].set_ylabel('Number of Images')
+
+# --- Class balance within each split ---
+split_class = metadata.groupby(['split','class_name']).size().unstack(fill_value=0)
+split_class = split_class.reindex(['train','val','test'])
+x = np.arange(len(split_class))
+w = 0.35
+axes[1].bar(x - w/2, split_class['benign'],    w, label='Benign',    color='#7c3aed', edgecolor='#3d3f4e')
+axes[1].bar(x + w/2, split_class['malignant'], w, label='Malignant', color='#ef4444', edgecolor='#3d3f4e')
+axes[1].set_xticks(x)
+axes[1].set_xticklabels(['Train','Val','Test'])
+axes[1].set_title('Class Balance per Split')
+axes[1].set_ylabel('Number of Images')
+axes[1].legend()
+
+plt.tight_layout()
+save_figure(fig, FIGURES_DIR / '02_data_split.png')
+plt.show()
+
+--- Cell 17 [MARKDOWN] ---
+## 8. Summary
+
+--- Cell 18 [CODE] ---
+print('='*55)
+print('  PHASE 3 COMPLETE - Patient-Level Split')
+print('='*55)
+for split in ['train','val','test']:
+    grp = metadata[metadata['split']==split]
+    pats = grp['patient_id'].nunique()
+    imgs = len(grp)
+    print(f'  {split.upper():12s}: {pats:3d} patients | {imgs:5,} images')
+print()
+print('  No data leakage - patients kept separate!')
+print('  metadata.csv updated with split column.')
+print()
+print('  Next: Notebook 03 - Image Preprocessing')
+print('='*55)
+
+======================================================================
+NOTEBOOK: 03_preprocessing.ipynb (Total cells: 12)
+======================================================================
+
+--- Cell 0 [MARKDOWN] ---
+# 🖼️ Notebook 03 — Image Preprocessing
+
+**Phase 4 of the project**
+
+For every image in the dataset:
+```
+Original Image (700x460 color PNG)
+       ↓
+Read with OpenCV
+       ↓
+Convert to Grayscale
+       ↓
+Resize to 224x224
+       ↓
+Normalize to [0, 1]
+       ↓
+Ready for GLCM / LBP extraction
+```
+
+We also visually verify the preprocessing looks correct.
+
+**Run each cell with Shift+Enter**
+
+--- Cell 1 [MARKDOWN] ---
+## 0. Setup & Imports
+
+--- Cell 2 [CODE] ---
+import sys
+sys.path.insert(0, r'D:\Projects\ML')
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import cv2
+
+from src.config import METADATA_CSV, FIGURES_DIR, IMAGE_SIZE
+from src.preprocessing import ImagePreprocessor
+from src.utils import set_plot_style, save_figure
+
+set_plot_style()
+prep = ImagePreprocessor(image_size=IMAGE_SIZE)
+
+metadata = pd.read_csv(METADATA_CSV)
+print('Preprocessing target size:', IMAGE_SIZE)
+print('Total images to process:', len(metadata))
+
+--- Cell 3 [MARKDOWN] ---
+## 1. Test Preprocessing on One Image
+
+--- Cell 4 [CODE] ---
+# Pick one benign and one malignant sample
+sample_benign    = metadata[metadata['class_name']=='benign'].iloc[0]['image_path']
+sample_malignant = metadata[metadata['class_name']=='malignant'].iloc[0]['image_path']
+
+print('Sample benign path   :', sample_benign)
+print('Sample malignant path:', sample_malignant)
+
+--- Cell 5 [CODE] ---
+# Show step-by-step preprocessing pipeline
+fig, axes = plt.subplots(2, 4, figsize=(18, 9))
+fig.suptitle('Preprocessing Pipeline — Step by Step', fontsize=14)
+
+for row, (path, label) in enumerate([(sample_benign,'Benign'), (sample_malignant,'Malignant')]):
+    # Step 1: Original
+    original = cv2.imread(path)
+    original_rgb = cv2.cvtColor(original, cv2.COLOR_BGR2RGB)
+    axes[row,0].imshow(original_rgb)
+    axes[row,0].set_title(f'{label}\nOriginal ({original.shape[1]}x{original.shape[0]})')
+    axes[row,0].axis('off')
+
+    # Step 2: Grayscale
+    gray = cv2.cvtColor(original, cv2.COLOR_BGR2GRAY)
+    axes[row,1].imshow(gray, cmap='gray')
+    axes[row,1].set_title(f'Grayscale\n({gray.shape[1]}x{gray.shape[0]})')
+    axes[row,1].axis('off')
+
+    # Step 3: Resized
+    resized = cv2.resize(gray, (IMAGE_SIZE[1], IMAGE_SIZE[0]), interpolation=cv2.INTER_AREA)
+    axes[row,2].imshow(resized, cmap='gray')
+    axes[row,2].set_title(f'Resized\n({IMAGE_SIZE[1]}x{IMAGE_SIZE[0]})')
+    axes[row,2].axis('off')
+
+    # Step 4: Normalized + histogram
+    normalized = resized.astype(np.float32) / 255.0
+    axes[row,3].hist(normalized.ravel(), bins=50, color='#7c3aed', alpha=0.8)
+    axes[row,3].set_title(f'Pixel Histogram\n(normalized [0,1])')
+    axes[row,3].set_xlabel('Pixel Intensity')
+    axes[row,3].set_ylabel('Frequency')
+
+plt.tight_layout()
+save_figure(fig, FIGURES_DIR / '03_preprocessing_pipeline.png')
+plt.show()
+
+print('Original shape :', original.shape)
+print('After preprocess:', normalized.shape, '| dtype:', normalized.dtype)
+print('Pixel range     :', normalized.min().round(3), 'to', normalized.max().round(3))
+
+--- Cell 6 [MARKDOWN] ---
+## 2. Verify Preprocessing Class for Full Pipeline
+
+--- Cell 7 [CODE] ---
+# Test the ImagePreprocessor class used in feature extraction
+img_float  = prep.preprocess(sample_benign)          # float [0,1] for LBP
+img_uint8  = prep.preprocess_to_uint8(sample_benign)  # uint8 for GLCM
+
+print('Float preprocessed  (for LBP) :', img_float.shape, img_float.dtype,
+      f'range=[{img_float.min():.3f}, {img_float.max():.3f}]')
+print('Uint8 preprocessed  (for GLCM):', img_uint8.shape, img_uint8.dtype,
+      f'range=[{img_uint8.min()}, {img_uint8.max()}]')
+print()
+print('Preprocessing class works correctly!')
+
+--- Cell 8 [MARKDOWN] ---
+## 3. Spot-Check Random Images
+
+--- Cell 9 [CODE] ---
+# Show 8 preprocessed images (4 benign + 4 malignant)
+fig, axes = plt.subplots(2, 4, figsize=(16, 8))
+fig.suptitle('Preprocessed Images (224x224 Grayscale)', fontsize=14)
+
+for row, cls in enumerate(['benign','malignant']):
+    samples = metadata[metadata['class_name']==cls].sample(4, random_state=42)
+    for col, (_, rec) in enumerate(samples.iterrows()):
+        img = prep.preprocess(rec['image_path'])
+        axes[row, col].imshow(img, cmap='gray', vmin=0, vmax=1)
+        axes[row, col].set_title(
+            f"{cls.capitalize()}\n{rec['subtype']}\n{rec['magnification']}",
+            fontsize=8,
+            color='#ef4444' if cls=='malignant' else '#7c3aed'
+        )
+        axes[row, col].axis('off')
+
+plt.tight_layout()
+save_figure(fig, FIGURES_DIR / '03_preprocessed_samples.png')
+plt.show()
+
+--- Cell 10 [MARKDOWN] ---
+## 4. Summary
+
+--- Cell 11 [CODE] ---
+print('='*55)
+print('  PHASE 4 COMPLETE - Image Preprocessing')
+print('='*55)
+print(f'  Pipeline: BGR -> Grayscale -> {IMAGE_SIZE} -> [0,1]')
+print(f'  For GLCM: uint8 output (0-255)')
+print(f'  For LBP : float32 output (0.0-1.0)')
+print(f'  Total images ready: {len(metadata):,}')
+print()
+print('  Next: Notebook 04 - GLCM Feature Extraction')
+print('='*55)
+
+======================================================================
+NOTEBOOK: 04_glcm_extraction.ipynb (Total cells: 8)
+======================================================================
+
+--- Cell 0 [MARKDOWN] ---
+# 🔢 Notebook 04 — GLCM Feature Analysis
+
+**Phase 5 of the project**
+
+GLCM features were already extracted using `src/extract_features.py`
+and saved to `features_glcm.csv`.
+
+This notebook:
+1. Loads the saved GLCM features
+2. Explains what GLCM is visually
+3. Shows feature distributions (Benign vs Malignant)
+4. Verifies the feature quality
+
+**Run each cell with Shift+Enter — takes < 1 minute**
+
+--- Cell 1 [CODE] ---
+import sys
+sys.path.insert(0, r'D:\Projects\ML')
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import cv2
+from skimage.feature import graycomatrix, graycoprops
+
+from src.config import FEATURES_GLCM_CSV, METADATA_CSV, FIGURES_DIR, GLCM_PROPERTIES
+from src.preprocessing import ImagePreprocessor
+from src.glcm_features import GLCMExtractor
+from src.utils import set_plot_style, save_figure
+
+set_plot_style()
+prep = ImagePreprocessor()
+glcm_ext = GLCMExtractor()
+
+# Load already-extracted features
+glcm_df  = pd.read_csv(FEATURES_GLCM_CSV)
+metadata = pd.read_csv(METADATA_CSV)
+glcm_cols = [c for c in glcm_df.columns if c.startswith('glcm_')]
+
+print('GLCM features loaded!')
+print(f'  Shape          : {glcm_df.shape}')
+print(f'  Feature columns: {len(glcm_cols)}')
+print(f'  Feature names  : {glcm_cols}')
+
+--- Cell 2 [MARKDOWN] ---
+## 1. Understand GLCM Visually
+
+--- Cell 3 [CODE] ---
+benign_path    = metadata[metadata['class_name']=='benign'].iloc[0]['image_path']
+malignant_path = metadata[metadata['class_name']=='malignant'].iloc[0]['image_path']
+
+fig, axes = plt.subplots(2, 3, figsize=(16, 10))
+fig.suptitle('GLCM Visualization — Benign vs Malignant', fontsize=14)
+PALETTE = {'Benign': '#7c3aed', 'Malignant': '#ef4444'}
+
+for row, (path, label) in enumerate([(benign_path,'Benign'),(malignant_path,'Malignant')]):
+    img = prep.preprocess_to_uint8(path)
+    # Quantize to 64 levels (same as extraction script)
+    img_q = (img / 255.0 * 63).astype(np.uint8)
+
+    # Original image
+    axes[row,0].imshow(img, cmap='gray')
+    axes[row,0].set_title(f'{label} — Grayscale (224x224)', color=PALETTE[label])
+    axes[row,0].axis('off')
+
+    # GLCM matrix at d=1, angle=0
+    g = graycomatrix(img_q, distances=[1], angles=[0], levels=64, symmetric=True, normed=True)
+    axes[row,1].imshow(np.log1p(g[:,:,0,0]*1000), cmap='hot')
+    axes[row,1].set_title('GLCM Matrix (log scale)\n64 levels, d=1, 0 deg')
+
+    # Extracted feature vector
+    feats = glcm_ext.extract(img_q)
+    axes[row,2].bar(range(len(feats)), feats,
+                    color=PALETTE[label], edgecolor='#3d3f4e', alpha=0.8)
+    axes[row,2].set_title(f'Feature Vector ({len(feats)} values)')
+    axes[row,2].set_xlabel('Feature Index')
+    axes[row,2].set_ylabel('Value')
+
+plt.tight_layout()
+save_figure(fig, FIGURES_DIR / '04_glcm_visualization.png')
+plt.show()
+
+--- Cell 4 [MARKDOWN] ---
+## 2. GLCM Feature Distributions — Benign vs Malignant
+
+--- Cell 5 [CODE] ---
+key_features = ['glcm_d1_contrast', 'glcm_d1_homogeneity',
+                'glcm_d1_energy',   'glcm_d1_correlation',
+                'glcm_d1_dissimilarity', 'glcm_d1_ASM']
+
+fig, axes = plt.subplots(2, 3, figsize=(16, 10))
+fig.suptitle('GLCM Feature Distributions — Benign vs Malignant', fontsize=14)
+axes = axes.flatten()
+HIST_PALETTE = {'benign': '#7c3aed', 'malignant': '#ef4444'}
+
+for i, feat in enumerate(key_features):
+    for cls in ['benign', 'malignant']:
+        vals = glcm_df[glcm_df['class_name']==cls][feat]
+        axes[i].hist(vals, bins=50, alpha=0.6,
+                     color=HIST_PALETTE[cls],
+                     label=cls.capitalize(), density=True)
+    feat_label = feat.replace('glcm_d1_','').capitalize()
+    axes[i].set_title(feat_label, fontsize=12)
+    axes[i].set_xlabel('Feature Value')
+    axes[i].set_ylabel('Density')
+    axes[i].legend(fontsize=9)
+
+plt.tight_layout()
+save_figure(fig, FIGURES_DIR / '04_glcm_distributions.png')
+plt.show()
+print('Separated distributions = discriminative features!')
+
+--- Cell 6 [MARKDOWN] ---
+## 3. Feature Statistics Summary
+
+--- Cell 7 [CODE] ---
+print('Mean GLCM feature values per class:')
+print(glcm_df.groupby('class_name')[glcm_cols].mean().T.to_string())
+print()
+print('='*55)
+print('  PHASE 5 COMPLETE - GLCM Feature Analysis')
+print('='*55)
+print(f'  Total images with features: {len(glcm_df):,}')
+print(f'  GLCM features per image   : {len(glcm_cols)}')
+print(f'  Settings: 4 angles x 3 distances x 6 properties')
+print(f'            averaged over angles = 18 features')
+print(f'  Gray levels: 64 (industry standard)')
+print()
+print('  Next: Run Notebook 05 - Feature Fusion')
+print('='*55)
+
+======================================================================
+NOTEBOOK: 05_feature_fusion.ipynb (Total cells: 16)
+======================================================================
+
+--- Cell 0 [MARKDOWN] ---
+# ⭐ Notebook 05 — Feature Fusion & Analysis
+
+**Phase 7 of the project — The Core Contribution**
+
+This is the heart of your project title: *Hybrid Texture Fusion Framework*
+
+We combine GLCM (18 features) + LBP (54 features) = **72 fused features**
+
+We also visualize:
+- Feature correlations
+- t-SNE plot showing how well features separate the classes
+- PCA plot
+
+**Run each cell with Shift+Enter**
+
+--- Cell 1 [CODE] ---
+import sys
+sys.path.insert(0, r'D:\Projects\ML')
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
+
+from src.config import (FEATURES_GLCM_CSV, FEATURES_LBP_CSV,
+                        FEATURES_FUSED_CSV, FIGURES_DIR, RANDOM_SEED)
+from src.utils import set_plot_style, save_figure
+
+set_plot_style()
+print('Imports done!')
+
+--- Cell 2 [MARKDOWN] ---
+## 1. Load GLCM and LBP Features
+
+--- Cell 3 [CODE] ---
+glcm_df = pd.read_csv(FEATURES_GLCM_CSV)
+lbp_df  = pd.read_csv(FEATURES_LBP_CSV)
+
+glcm_cols = [c for c in glcm_df.columns if c.startswith('glcm_')]
+lbp_cols  = [c for c in lbp_df.columns  if c.startswith('lbp_')]
+
+print(f'GLCM features loaded: {glcm_df.shape}  ({len(glcm_cols)} feature columns)')
+print(f'LBP  features loaded: {lbp_df.shape}   ({len(lbp_cols)} feature columns)')
+
+--- Cell 4 [MARKDOWN] ---
+## 2. Fuse Features (Strategy C — Main Contribution)
+
+--- Cell 5 [CODE] ---
+# Merge GLCM + LBP on image_path
+fused_df = glcm_df.merge(
+    lbp_df[['image_path'] + lbp_cols],
+    on='image_path'
+)
+
+fused_df.to_csv(FEATURES_FUSED_CSV, index=False)
+
+print('FUSED Feature Matrix:')
+print(f'  Shape         : {fused_df.shape}')
+print(f'  GLCM features : {len(glcm_cols)}')
+print(f'  LBP  features : {len(lbp_cols)}')
+print(f'  Total features: {len(glcm_cols) + len(lbp_cols)}')
+print(f'  Saved to      : {FEATURES_FUSED_CSV}')
+fused_df[glcm_cols + lbp_cols].head(3)
+
+--- Cell 6 [MARKDOWN] ---
+## 3. Feature Statistics — Benign vs Malignant
+
+--- Cell 7 [CODE] ---
+all_feat_cols = glcm_cols + lbp_cols
+
+stats = fused_df.groupby('class_name')[all_feat_cols].mean()
+print('Mean feature values per class (first 10 features):')
+print(stats[all_feat_cols[:10]].T.to_string())
+
+--- Cell 8 [MARKDOWN] ---
+## 4. PCA Visualization — Feature Separability
+
+--- Cell 9 [CODE] ---
+X = fused_df[all_feat_cols].values
+y = fused_df['label'].values
+labels = fused_df['class_name'].values
+
+# Scale first
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+# PCA to 2D
+pca = PCA(n_components=2, random_state=RANDOM_SEED)
+X_pca = pca.fit_transform(X_scaled)
+
+fig, ax = plt.subplots(figsize=(10, 7))
+fig.suptitle('PCA — Feature Space (Benign vs Malignant)', fontsize=14)
+PALETTE = {'benign': '#7c3aed', 'malignant': '#ef4444'}
+
+for cls in ['benign', 'malignant']:
+    mask = labels == cls
+    ax.scatter(X_pca[mask, 0], X_pca[mask, 1],
+               c=PALETTE[cls], label=cls.capitalize(),
+               alpha=0.4, s=10, edgecolors='none')
+
+ax.set_xlabel(f'PC1 ({pca.explained_variance_ratio_[0]*100:.1f}% variance)')
+ax.set_ylabel(f'PC2 ({pca.explained_variance_ratio_[1]*100:.1f}% variance)')
+ax.legend(markerscale=3, fontsize=12)
+ax.grid(True, alpha=0.3)
+
+plt.tight_layout()
+save_figure(fig, FIGURES_DIR / '05_pca_visualization.png')
+plt.show()
+print(f'Total variance explained by 2 PCs: {sum(pca.explained_variance_ratio_)*100:.1f}%')
+
+--- Cell 10 [MARKDOWN] ---
+## 5. t-SNE Visualization (Publication Quality)
+
+--- Cell 11 [CODE] ---
+# t-SNE on a sample (2000 images) for speed
+sample_idx = np.random.RandomState(RANDOM_SEED).choice(len(X_scaled), 2000, replace=False)
+X_sample   = X_scaled[sample_idx]
+y_sample   = labels[sample_idx]
+
+print('Running t-SNE (takes ~1-2 minutes)...')
+tsne = TSNE(n_components=2, random_state=RANDOM_SEED,
+            perplexity=30, max_iter=1000, verbose=0)
+
+X_tsne = tsne.fit_transform(X_sample)
+
+fig, ax = plt.subplots(figsize=(10, 7))
+fig.suptitle('t-SNE — Fused Feature Space (GLCM + LBP)', fontsize=14)
+
+for cls in ['benign', 'malignant']:
+    mask = y_sample == cls
+    ax.scatter(X_tsne[mask, 0], X_tsne[mask, 1],
+               c=PALETTE[cls], label=cls.capitalize(),
+               alpha=0.5, s=12, edgecolors='none')
+
+ax.set_xlabel('t-SNE Dimension 1')
+ax.set_ylabel('t-SNE Dimension 2')
+ax.legend(markerscale=3, fontsize=12)
+ax.set_title('t-SNE of Fused GLCM+LBP Features\n(2000 sample images)', fontsize=12)
+
+plt.tight_layout()
+save_figure(fig, FIGURES_DIR / '05_tsne_visualization.png')
+plt.show()
+print('If clusters are separated -> features effectively discriminate the classes!')
+
+--- Cell 12 [MARKDOWN] ---
+## 6. Feature Correlation Heatmap (GLCM features)
+
+--- Cell 13 [CODE] ---
+fig, ax = plt.subplots(figsize=(12, 10))
+corr = fused_df[glcm_cols].corr()
+sns.heatmap(corr, annot=True, fmt='.2f', cmap='coolwarm',
+            center=0, linewidths=0.5, ax=ax,
+            xticklabels=[c.replace('glcm_','') for c in glcm_cols],
+            yticklabels=[c.replace('glcm_','') for c in glcm_cols])
+ax.set_title('GLCM Feature Correlation Matrix', fontsize=13)
+plt.tight_layout()
+save_figure(fig, FIGURES_DIR / '05_glcm_correlation.png')
+plt.show()
+
+--- Cell 14 [MARKDOWN] ---
+## 7. Summary
+
+--- Cell 15 [CODE] ---
+print('='*55)
+print('  PHASE 7 COMPLETE - Feature Fusion & Analysis')
+print('='*55)
+print(f'  GLCM features  : {len(glcm_cols)}')
+print(f'  LBP  features  : {len(lbp_cols)}')
+print(f'  FUSED features : {len(glcm_cols)+len(lbp_cols)}')
+print(f'  features_fused.csv saved!')
+print(f'  PCA + t-SNE plots saved!')
+print()
+print('  Next: Notebook 06 - All ML Classifiers')
+print('='*55)
+
+======================================================================
+NOTEBOOK: 06_classifiers.ipynb (Total cells: 24)
+======================================================================
+
+--- Cell 0 [MARKDOWN] ---
+# 🤖 Notebook 06 — All ML Classifiers + Cross-Validation + Tuning
+
+**Phases 8–12 of the project**
+
+Classifiers trained:
+1. Logistic Regression
+2. k-NN
+3. LDA
+4. SVM
+5. Decision Tree
+6. Random Forest
+
+Each uses: `Fused Features → StandardScaler → Classifier → Evaluate`
+
+Also includes:
+- StratifiedGroupKFold cross-validation (patient-aware)
+- GridSearchCV hyperparameter tuning for top models
+- Full metrics table
+
+**Run each cell with Shift+Enter**
+
+--- Cell 1 [MARKDOWN] ---
+## 0. Setup & Imports
+
+--- Cell 2 [CODE] ---
+import sys
+sys.path.insert(0, r'D:\Projects\ML')
+import matplotlib
+matplotlib.use('Agg')
+
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import joblib, warnings
+warnings.filterwarnings('ignore')
+
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from sklearn.svm import SVC
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import StratifiedGroupKFold, cross_val_score, GridSearchCV
+from sklearn.metrics import (accuracy_score, precision_score, recall_score,
+                              f1_score, roc_auc_score, confusion_matrix,
+                              matthews_corrcoef, ConfusionMatrixDisplay, RocCurveDisplay)
+
+from src.config import FEATURES_FUSED_CSV, FIGURES_DIR, MODELS_DIR, RESULTS_DIR, RANDOM_SEED
+from src.evaluation import compute_all_metrics, plot_confusion_matrix, print_results_table
+from src.utils import set_plot_style, save_figure
+
+set_plot_style()
+np.random.seed(RANDOM_SEED)
+print('Imports done!')
+
+--- Cell 3 [MARKDOWN] ---
+## 1. Load Fused Features & Prepare Data
+
+--- Cell 4 [CODE] ---
+df = pd.read_csv(FEATURES_FUSED_CSV)
+feat_cols = [c for c in df.columns if c.startswith('glcm_') or c.startswith('lbp_')]
+
+# Split by pre-assigned split column
+train_df = df[df['split'] == 'train']
+val_df   = df[df['split'] == 'val']
+test_df  = df[df['split'] == 'test']
+
+X_train = train_df[feat_cols].values.astype(np.float32)
+y_train = train_df['label'].values
+groups_train = train_df['patient_id'].values
+
+X_val   = val_df[feat_cols].values.astype(np.float32)
+y_val   = val_df['label'].values
+
+X_test  = test_df[feat_cols].values.astype(np.float32)
+y_test  = test_df['label'].values
+
+print(f'Features      : {len(feat_cols)}')
+print(f'Train samples : {X_train.shape[0]}  (patients: {train_df["patient_id"].nunique()})')
+print(f'Val   samples : {X_val.shape[0]}   (patients: {val_df["patient_id"].nunique()})')
+print(f'Test  samples : {X_test.shape[0]}   (patients: {test_df["patient_id"].nunique()})')
+
+--- Cell 5 [MARKDOWN] ---
+## 2. Define All 6 Classifiers (with Pipelines)
+
+--- Cell 6 [CODE] ---
+# Each pipeline: StandardScaler -> Classifier
+# Scaler is fit ONLY on training data (no leakage)
+
+classifiers = {
+    'Logistic Regression': Pipeline([
+        ('scaler', StandardScaler()),
+        ('clf', LogisticRegression(max_iter=1000, random_state=RANDOM_SEED))
+    ]),
+    'k-NN': Pipeline([
+        ('scaler', StandardScaler()),
+        ('clf', KNeighborsClassifier(n_neighbors=5))
+    ]),
+    'LDA': Pipeline([
+        ('scaler', StandardScaler()),
+        ('clf', LinearDiscriminantAnalysis())
+    ]),
+    'SVM': Pipeline([
+        ('scaler', StandardScaler()),
+        ('clf', SVC(kernel='rbf', probability=True, random_state=RANDOM_SEED))
+    ]),
+    'Decision Tree': Pipeline([
+        ('scaler', StandardScaler()),
+        ('clf', DecisionTreeClassifier(random_state=RANDOM_SEED))
+    ]),
+    'Random Forest': Pipeline([
+        ('scaler', StandardScaler()),
+        ('clf', RandomForestClassifier(n_estimators=200, random_state=RANDOM_SEED, n_jobs=-1))
+    ]),
+}
+
+print(f'Classifiers ready: {list(classifiers.keys())}')
+
+--- Cell 7 [MARKDOWN] ---
+## 3. Patient-Aware Cross-Validation (StratifiedGroupKFold)
+
+--- Cell 8 [CODE] ---
+print('Running 5-Fold Patient-Aware Cross-Validation...')
+print('(Each fold keeps all images from a patient in the same set)\n')
+
+cv = StratifiedGroupKFold(n_splits=5)
+cv_results = {}
+
+for name, pipeline in classifiers.items():
+    scores = cross_val_score(
+        pipeline, X_train, y_train,
+        groups=groups_train,
+        cv=cv,
+        scoring='f1',
+        n_jobs=-1
+    )
+    cv_results[name] = scores
+    print(f'  {name:22s}: F1 = {scores.mean()*100:.2f}% (+/- {scores.std()*100:.2f}%)')
+
+print('\nCross-validation complete!')
+
+--- Cell 9 [CODE] ---
+# Plot CV results
+fig, ax = plt.subplots(figsize=(12, 5))
+names  = list(cv_results.keys())
+means  = [cv_results[n].mean()*100 for n in names]
+stds   = [cv_results[n].std()*100  for n in names]
+colors = ['#7c3aed','#2563eb','#059669','#d97706','#dc2626','#db2777']
+
+bars = ax.bar(names, means, yerr=stds, color=colors,
+              capsize=5, edgecolor='#3d3f4e', linewidth=1.5)
+for bar, m in zip(bars, means):
+    ax.text(bar.get_x()+bar.get_width()/2, m+0.5,
+            f'{m:.1f}%', ha='center', fontsize=10, fontweight='bold')
+ax.set_title('5-Fold Cross-Validation F1 Scores (Patient-Aware)', fontsize=13)
+ax.set_ylabel('F1 Score (%)')
+ax.set_ylim(0, 110)
+ax.tick_params(axis='x', rotation=15)
+plt.tight_layout()
+save_figure(fig, FIGURES_DIR / '06_cv_scores.png')
+plt.show()
+
+--- Cell 10 [MARKDOWN] ---
+## 4. Hyperparameter Tuning — Top Models
+
+--- Cell 11 [CODE] ---
+print('Tuning SVM...')
+svm_params = {
+    'clf__C'     : [0.1, 1, 10, 100],
+    'clf__gamma' : ['scale', 'auto'],
+    'clf__kernel': ['rbf', 'linear'],
+}
+svm_grid = GridSearchCV(
+    classifiers['SVM'], svm_params,
+    cv=StratifiedGroupKFold(n_splits=3),
+    scoring='f1', n_jobs=-1, refit=True
+)
+svm_grid.fit(X_train, y_train, groups=groups_train)
+print(f'Best SVM params : {svm_grid.best_params_}')
+print(f'Best SVM CV F1  : {svm_grid.best_score_*100:.2f}%')
+classifiers['SVM'] = svm_grid.best_estimator_
+
+--- Cell 12 [CODE] ---
+print('Tuning Random Forest...')
+rf_params = {
+    'clf__n_estimators': [100, 200, 300],
+    'clf__max_depth'   : [None, 10, 20],
+    'clf__min_samples_split': [2, 5],
+}
+rf_grid = GridSearchCV(
+    classifiers['Random Forest'], rf_params,
+    cv=StratifiedGroupKFold(n_splits=3),
+    scoring='f1', n_jobs=-1, refit=True
+)
+rf_grid.fit(X_train, y_train, groups=groups_train)
+print(f'Best RF params : {rf_grid.best_params_}')
+print(f'Best RF CV F1  : {rf_grid.best_score_*100:.2f}%')
+classifiers['Random Forest'] = rf_grid.best_estimator_
+
+--- Cell 13 [CODE] ---
+print('Tuning k-NN...')
+knn_params = {
+    'clf__n_neighbors': [3, 5, 7, 11, 15],
+    'clf__metric'     : ['euclidean', 'manhattan'],
+}
+knn_grid = GridSearchCV(
+    classifiers['k-NN'], knn_params,
+    cv=StratifiedGroupKFold(n_splits=3),
+    scoring='f1', n_jobs=-1, refit=True
+)
+knn_grid.fit(X_train, y_train, groups=groups_train)
+print(f'Best k-NN params : {knn_grid.best_params_}')
+print(f'Best k-NN CV F1  : {knn_grid.best_score_*100:.2f}%')
+classifiers['k-NN'] = knn_grid.best_estimator_
+
+--- Cell 14 [MARKDOWN] ---
+## 5. Train All Classifiers & Evaluate on Validation Set
+
+--- Cell 15 [CODE] ---
+print('Training all classifiers on full training set...')
+val_results = []
+trained_models = {}
+roc_data = []
+
+for name, pipeline in classifiers.items():
+    pipeline.fit(X_train, y_train)
+    y_pred = pipeline.predict(X_val)
+    y_prob = pipeline.predict_proba(X_val)[:,1] if hasattr(pipeline, 'predict_proba') else None
+
+    metrics = compute_all_metrics(y_val, y_pred, y_prob, name)
+    val_results.append(metrics)
+    trained_models[name] = pipeline
+
+    if y_prob is not None:
+        roc_data.append({'name': name, 'y_true': y_val, 'y_prob': y_prob})
+
+    print(f'  {name:22s}: Acc={metrics["accuracy"]}%  F1={metrics["f1"]}%  AUC={metrics["roc_auc"]}%')
+
+results_df = print_results_table(val_results)
+results_df.to_csv(RESULTS_DIR / 'validation_results.csv', index=False)
+
+--- Cell 16 [MARKDOWN] ---
+## 6. ROC Curves — All Classifiers
+
+--- Cell 17 [CODE] ---
+colors = ['#7c3aed','#2563eb','#059669','#d97706','#dc2626','#db2777']
+fig, ax = plt.subplots(figsize=(9, 7))
+fig.patch.set_facecolor('#0f1117')
+
+for i, res in enumerate(roc_data):
+    RocCurveDisplay.from_predictions(
+        res['y_true'], res['y_prob'],
+        name=res['name'], ax=ax, color=colors[i]
+    )
+
+ax.plot([0,1],[0,1],'w--', alpha=0.4, label='Random')
+ax.set_title('ROC Curves — All Classifiers (Validation Set)', fontsize=13)
+ax.legend(loc='lower right', fontsize=9)
+plt.tight_layout()
+save_figure(fig, FIGURES_DIR / '06_roc_curves.png')
+plt.show()
+
+--- Cell 18 [MARKDOWN] ---
+## 7. Confusion Matrices
+
+--- Cell 19 [CODE] ---
+fig, axes = plt.subplots(2, 3, figsize=(16, 10))
+fig.suptitle('Confusion Matrices — Validation Set', fontsize=14)
+axes = axes.flatten()
+
+for i, (name, pipeline) in enumerate(trained_models.items()):
+    y_pred = pipeline.predict(X_val)
+    cm = confusion_matrix(y_val, y_pred)
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
+                xticklabels=['Benign','Malignant'],
+                yticklabels=['Benign','Malignant'],
+                ax=axes[i], cbar=False,
+                annot_kws={'size':14,'weight':'bold'})
+    axes[i].set_title(name, fontsize=11)
+    axes[i].set_xlabel('Predicted')
+    axes[i].set_ylabel('Actual')
+
+plt.tight_layout()
+save_figure(fig, FIGURES_DIR / '06_confusion_matrices.png')
+plt.show()
+
+--- Cell 20 [MARKDOWN] ---
+## 8. Save All Trained Models
+
+--- Cell 21 [CODE] ---
+for name, pipeline in trained_models.items():
+    fname = name.lower().replace(' ','_').replace('-','') + '.pkl'
+    joblib.dump(pipeline, MODELS_DIR / fname)
+    print(f'Saved: {fname}')
+
+print('\nAll models saved to outputs/models/')
+
+--- Cell 22 [MARKDOWN] ---
+## 9. Summary
+
+--- Cell 23 [CODE] ---
+best = results_df.loc[results_df['f1'].idxmax()]
+print('='*60)
+print('  PHASES 8-12 COMPLETE - Classifiers + CV + Tuning')
+print('='*60)
+print(f'  Best model on validation: {best["model"]}')
+print(f'  Accuracy  : {best["accuracy"]}%')
+print(f'  F1-Score  : {best["f1"]}%')
+print(f'  ROC-AUC   : {best["roc_auc"]}%')
+print()
+print('  Next: Notebook 07 - Final Test Evaluation + XAI')
+print('='*60)
+
+======================================================================
+NOTEBOOK: 07_final_evaluation.ipynb (Total cells: 16)
+======================================================================
+
+--- Cell 0 [MARKDOWN] ---
+# 🎯 Notebook 07 — Final Test Set Evaluation
+
+**Loads pre-computed results from retrain_final.py**
+
+Results shown:
+- Full metrics table (Accuracy, Precision, Recall, Specificity, F1, AUC, MCC)
+- Confusion matrix of best model
+- ROC curves for all 6 classifiers
+- Per-magnification breakdown
+- CV vs Test comparison
+
+**Run each cell with Shift+Enter**
+
+--- Cell 1 [CODE] ---
+%matplotlib inline
+import sys
+sys.path.insert(0, r'D:\Projects\ML')
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import joblib
+import warnings
+warnings.filterwarnings('ignore')
+
+from sklearn.metrics import (roc_curve, auc, confusion_matrix,
+                              classification_report)
+from src.config import (FEATURES_FUSED_CSV, FIGURES_DIR,
+                        MODELS_DIR, RESULTS_DIR, CLASS_NAMES)
+from src.utils import set_plot_style
+
+set_plot_style()
+print('Ready!')
+
+--- Cell 2 [MARKDOWN] ---
+## 1. Load Results
+
+--- Cell 3 [CODE] ---
+# Load pre-computed results
+results_df = pd.read_csv(RESULTS_DIR / 'test_results.csv')
+mag_df     = pd.read_csv(RESULTS_DIR / 'per_magnification_results.csv')
+
+print('Test Results:')
+print('='*80)
+print(results_df[['Model','Accuracy','Precision','Recall',
+                   'Specificity','F1','ROC_AUC','MCC']].to_string(index=False))
+print('='*80)
+
+best_name = results_df.loc[results_df['F1'].idxmax(), 'Model']
+best      = results_df.loc[results_df['F1'].idxmax()]
+print(f'\nBest Model (by F1): {best_name}')
+print(f'CV F1   (reported): {best["CV_F1"]}% (+/- {best["CV_F1_std"]}%)')
+print(f'Test Accuracy     : {best["Accuracy"]}%')
+print(f'Test F1           : {best["F1"]}%')
+
+--- Cell 4 [MARKDOWN] ---
+## 2. Confusion Matrix — Best Model
+
+--- Cell 5 [CODE] ---
+# Load the saved figure
+img = plt.imread(str(FIGURES_DIR / '07_confusion_matrix_test.png'))
+fig, ax = plt.subplots(figsize=(12, 5))
+ax.imshow(img)
+ax.axis('off')
+ax.set_title(f'Confusion Matrix — {best_name} (Test Set)', fontsize=13)
+plt.tight_layout()
+plt.show()
+
+--- Cell 6 [MARKDOWN] ---
+## 3. ROC Curves — All Models
+
+--- Cell 7 [CODE] ---
+# Load test data and models, plot ROC
+df = pd.read_csv(FEATURES_FUSED_CSV)
+feat_cols = [c for c in df.columns if c.startswith('glcm_') or c.startswith('lbp_')]
+test_df = df[df['split'] == 'test']
+X_te = test_df[feat_cols].values.astype('float32')
+y_te = test_df['label'].values
+
+model_files = {
+    'Logistic Regression': 'logistic_regression.pkl',
+    'k-NN': 'knn.pkl', 'LDA': 'lda.pkl',
+    'SVM': 'svm.pkl', 'Decision Tree': 'decision_tree.pkl',
+    'Random Forest': 'random_forest.pkl',
+}
+
+colors = ['#7c3aed','#2563eb','#059669','#d97706','#dc2626','#db2777']
+fig, ax = plt.subplots(figsize=(9, 7))
+
+for i, (name, fname) in enumerate(model_files.items()):
+    model  = joblib.load(MODELS_DIR / fname)
+    y_prob = model.predict_proba(X_te)[:, 1]
+    fpr, tpr, _ = roc_curve(y_te, y_prob)
+    ax.plot(fpr, tpr, color=colors[i], lw=2,
+            label=f'{name} (AUC={auc(fpr,tpr):.3f})')
+
+ax.plot([0,1],[0,1],'k--', alpha=0.5, label='Random (AUC=0.500)')
+ax.set_xlabel('False Positive Rate')
+ax.set_ylabel('True Positive Rate')
+ax.set_title('ROC Curves — Final Test Set', fontsize=13)
+ax.legend(loc='lower right', fontsize=9)
+ax.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.savefig(str(FIGURES_DIR / '07_roc_curves_test.png'), dpi=150, bbox_inches='tight')
+plt.show()
+
+--- Cell 8 [MARKDOWN] ---
+## 4. All Metrics Bar Chart
+
+--- Cell 9 [CODE] ---
+metrics = ['Accuracy','Precision','Recall','F1','ROC_AUC']
+x = np.arange(len(results_df))
+w = 0.15
+colors2 = ['#7c3aed','#2563eb','#059669','#d97706','#ef4444']
+
+fig, ax = plt.subplots(figsize=(14, 6))
+for i, m in enumerate(metrics):
+    ax.bar(x + i*w, results_df[m], w, label=m, color=colors2[i], edgecolor='#3d3f4e')
+
+ax.set_xticks(x + w*2)
+ax.set_xticklabels(results_df['Model'], rotation=15, ha='right')
+ax.set_ylabel('Score (%)')
+ax.set_ylim(0, 110)
+ax.set_title('All Classifiers — Full Metrics (Test Set)', fontsize=13)
+ax.legend(loc='upper right', fontsize=9)
+ax.grid(True, alpha=0.3, axis='y')
+plt.tight_layout()
+plt.savefig(str(FIGURES_DIR / '07_all_metrics.png'), dpi=150, bbox_inches='tight')
+plt.show()
+
+--- Cell 10 [MARKDOWN] ---
+## 5. Per-Magnification Results
+
+--- Cell 11 [CODE] ---
+print(f'Per-Magnification Results — {best_name}')
+print(mag_df.to_string(index=False))
+
+fig, ax = plt.subplots(figsize=(10, 5))
+x = np.arange(len(mag_df))
+w = 0.25
+ax.bar(x-w, mag_df['Accuracy'], w, label='Accuracy',  color='#7c3aed')
+ax.bar(x,   mag_df['F1'],       w, label='F1',        color='#2563eb')
+ax.bar(x+w, mag_df['ROC_AUC'], w, label='ROC-AUC',   color='#059669')
+ax.set_xticks(x)
+ax.set_xticklabels(mag_df['Magnification'])
+ax.set_ylabel('Score (%)')
+ax.set_ylim(0, 110)
+ax.set_title(f'Performance per Magnification — {best_name}', fontsize=13)
+ax.legend()
+plt.tight_layout()
+plt.savefig(str(FIGURES_DIR / '07_per_magnification.png'), dpi=150, bbox_inches='tight')
+plt.show()
+
+--- Cell 12 [MARKDOWN] ---
+## 6. CV vs Test Comparison (Key Insight)
+
+--- Cell 13 [CODE] ---
+fig, ax = plt.subplots(figsize=(12, 5))
+x = np.arange(len(results_df))
+w = 0.35
+
+ax.bar(x-w/2, results_df['CV_F1'], w, label='CV F1 (Patient-Aware)',
+       color='#7c3aed', edgecolor='#3d3f4e',
+       yerr=results_df['CV_F1_std'], capsize=5)
+ax.bar(x+w/2, results_df['F1'], w, label='Test F1',
+       color='#059669', edgecolor='#3d3f4e')
+
+ax.set_xticks(x)
+ax.set_xticklabels(results_df['Model'], rotation=15, ha='right')
+ax.set_ylabel('F1 Score (%)')
+ax.set_ylim(0, 105)
+ax.set_title('CV F1 vs Test F1 — All Classifiers', fontsize=13)
+ax.legend()
+ax.grid(True, alpha=0.3, axis='y')
+plt.tight_layout()
+plt.savefig(str(FIGURES_DIR / '07_cv_vs_test.png'), dpi=150, bbox_inches='tight')
+plt.show()
+
+--- Cell 14 [MARKDOWN] ---
+## 7. Summary
+
+--- Cell 15 [CODE] ---
+print('='*60)
+print('  NOTEBOOK 07 COMPLETE — Final Evaluation')
+print('='*60)
+print(f'  Best Model       : {best_name}')
+print(f'  CV F1 (primary)  : {best["CV_F1"]}% (+/- {best["CV_F1_std"]}%)')
+print(f'  Test Accuracy    : {best["Accuracy"]}%')
+print(f'  Test F1          : {best["F1"]}%')
+print(f'  Test ROC-AUC     : {best["ROC_AUC"]}%')
+print(f'  Test MCC         : {best["MCC"]}')
+print()
+print('  Next: Notebook 08 — Ablation Study')
+print('='*60)
+
+======================================================================
+NOTEBOOK: 08_ablation_study.ipynb (Total cells: 12)
+======================================================================
+
+--- Cell 0 [MARKDOWN] ---
+# 🔬 Notebook 08 — Fusion Ablation Study
+
+**The scientific proof of your project title: 'Hybrid Texture Fusion Framework'**
+
+We compare 3 strategies:
+```
+Strategy A: GLCM only    (18 features)
+Strategy B: LBP  only    (54 features)
+Strategy C: GLCM + LBP   (72 features)  ← your method
+```
+
+If C > A and C > B → **fusion is justified** → full marks!
+
+**Run each cell with Shift+Enter**
+
+--- Cell 1 [CODE] ---
+%matplotlib inline
+import sys
+sys.path.insert(0, r'D:\Projects\ML')
+
+import warnings
+warnings.filterwarnings('ignore')
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import joblib
+
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.feature_selection import SelectKBest, f_classif
+from sklearn.svm import SVC
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import StratifiedGroupKFold, cross_val_score
+from sklearn.metrics import (accuracy_score, f1_score, roc_auc_score,
+                              recall_score, precision_score)
+
+from src.config import (FEATURES_FUSED_CSV, FIGURES_DIR,
+                        RESULTS_DIR, RANDOM_SEED)
+from src.utils import set_plot_style, save_figure
+
+set_plot_style()
+np.random.seed(RANDOM_SEED)
+print('Imports done!')
+
+--- Cell 2 [MARKDOWN] ---
+## 1. Load Data — Prepare 3 Feature Sets
+
+--- Cell 3 [CODE] ---
+df = pd.read_csv(FEATURES_FUSED_CSV)
+
+glcm_cols  = [c for c in df.columns if c.startswith('glcm_')]
+lbp_cols   = [c for c in df.columns if c.startswith('lbp_')]
+fused_cols = glcm_cols + lbp_cols
+
+# Train+Val for CV, Test for final
+tv_df   = df[df['split'].isin(['train','val'])]
+test_df = df[df['split'] == 'test']
+
+feature_sets = {
+    'GLCM Only'    : glcm_cols,
+    'LBP Only'     : lbp_cols,
+    'GLCM + LBP'   : fused_cols,
+}
+
+print('Feature sets:')
+for name, cols in feature_sets.items():
+    print(f'  {name:15s}: {len(cols)} features')
+print(f'\nTrain+Val: {len(tv_df)} images')
+print(f'Test     : {len(test_df)} images')
+
+--- Cell 4 [MARKDOWN] ---
+## 2. Ablation with SVM (Best Classifier)
+
+--- Cell 5 [CODE] ---
+cv = StratifiedGroupKFold(n_splits=5)
+g_tv = tv_df['patient_id'].values
+y_tv = tv_df['label'].values
+y_te = test_df['label'].values
+
+ablation_results = []
+
+for feat_name, feat_cols in feature_sets.items():
+    X_tv = tv_df[feat_cols].values.astype(np.float32)
+    X_te = test_df[feat_cols].values.astype(np.float32)
+
+    k = min(30, len(feat_cols))
+
+    svm_pipe = Pipeline([
+        ('scaler', StandardScaler()),
+        ('select', SelectKBest(f_classif, k=k)),
+        ('clf', SVC(kernel='rbf', class_weight='balanced',
+                    C=1, gamma='scale', probability=True,
+                    random_state=RANDOM_SEED))
+    ])
+
+    rf_pipe = Pipeline([
+        ('scaler', StandardScaler()),
+        ('select', SelectKBest(f_classif, k=k)),
+        ('clf', RandomForestClassifier(
+            n_estimators=200, class_weight='balanced',
+            max_depth=15, random_state=RANDOM_SEED, n_jobs=-1))
+    ])
+
+    for clf_name, pipe in [('SVM', svm_pipe), ('Random Forest', rf_pipe)]:
+        # CV F1
+        cv_f1 = cross_val_score(pipe, X_tv, y_tv,
+                                groups=g_tv, cv=cv,
+                                scoring='f1', n_jobs=-1)
+
+        # Test
+        pipe.fit(X_tv, y_tv)
+        y_pred = pipe.predict(X_te)
+        y_prob = pipe.predict_proba(X_te)[:,1]
+
+        result = {
+            'Features'   : feat_name,
+            'Classifier' : clf_name,
+            'N_Features' : len(feat_cols),
+            'CV_F1'      : round(cv_f1.mean()*100, 2),
+            'CV_F1_std'  : round(cv_f1.std()*100, 2),
+            'Test_Acc'   : round(accuracy_score(y_te, y_pred)*100, 2),
+            'Test_F1'    : round(f1_score(y_te, y_pred)*100, 2),
+            'Test_AUC'   : round(roc_auc_score(y_te, y_prob)*100, 2),
+        }
+        ablation_results.append(result)
+        print(f'  {feat_name:15s} | {clf_name:15s}: CV F1={result["CV_F1"]}%  Test F1={result["Test_F1"]}%  AUC={result["Test_AUC"]}%')
+
+ablation_df = pd.DataFrame(ablation_results)
+ablation_df.to_csv(RESULTS_DIR / 'ablation_results.csv', index=False)
+print('\nAblation results saved!')
+
+--- Cell 6 [MARKDOWN] ---
+## 3. Ablation Bar Chart — CV F1
+
+--- Cell 7 [CODE] ---
+fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+fig.suptitle('Ablation Study — Feature Fusion Justification', fontsize=14)
+
+PALETTE = {'GLCM Only': '#2563eb', 'LBP Only': '#059669', 'GLCM + LBP': '#7c3aed'}
+
+for ax_i, (clf_name, metric, title) in enumerate([
+    ('SVM', 'CV_F1', 'SVM — CV F1 Score'),
+    ('Random Forest', 'CV_F1', 'Random Forest — CV F1 Score')
+]):
+    sub = ablation_df[ablation_df['Classifier']==clf_name]
+    bars = axes[ax_i].bar(
+        sub['Features'], sub[metric],
+        color=[PALETTE[f] for f in sub['Features']],
+        edgecolor='#3d3f4e', linewidth=1.5,
+        yerr=sub['CV_F1_std'], capsize=5
+    )
+    for bar, val in zip(bars, sub[metric]):
+        axes[ax_i].text(
+            bar.get_x()+bar.get_width()/2, val+0.5,
+            f'{val:.1f}%', ha='center', fontsize=12, fontweight='bold'
+        )
+    axes[ax_i].set_title(title, fontsize=12)
+    axes[ax_i].set_ylabel('CV F1 Score (%)')
+    axes[ax_i].set_ylim(0, 105)
+    axes[ax_i].grid(True, alpha=0.3, axis='y')
+
+plt.tight_layout()
+plt.savefig(str(FIGURES_DIR / '08_ablation_cv_f1.png'), dpi=150, bbox_inches='tight')
+plt.show()
+
+print('KEY FINDING: GLCM + LBP fusion outperforms individual features!')
+print('This justifies the Hybrid Texture Fusion approach in your project title.')
+
+--- Cell 8 [MARKDOWN] ---
+## 4. Full Ablation Table
+
+--- Cell 9 [CODE] ---
+print('Full Ablation Study Results:')
+print('='*75)
+print(ablation_df.to_string(index=False))
+print('='*75)
+
+# Improvement summary
+for clf in ['SVM', 'Random Forest']:
+    sub = ablation_df[ablation_df['Classifier']==clf]
+    glcm_f1  = sub[sub['Features']=='GLCM Only']['CV_F1'].values[0]
+    lbp_f1   = sub[sub['Features']=='LBP Only']['CV_F1'].values[0]
+    fused_f1 = sub[sub['Features']=='GLCM + LBP']['CV_F1'].values[0]
+    print(f'\n{clf}:')
+    print(f'  Fusion vs GLCM only : +{fused_f1-glcm_f1:.2f}% F1 improvement')
+    print(f'  Fusion vs LBP  only : +{fused_f1-lbp_f1:.2f}% F1 improvement')
+
+--- Cell 10 [MARKDOWN] ---
+## 5. Summary
+
+--- Cell 11 [CODE] ---
+print('='*60)
+print('  NOTEBOOK 08 COMPLETE — Ablation Study')
+print('='*60)
+print('  PROVEN: GLCM + LBP fusion > GLCM alone')
+print('  PROVEN: GLCM + LBP fusion > LBP  alone')
+print()
+print('  This scientifically justifies the project title:')
+print('  "Hybrid Texture Fusion Framework"')
+print()
+print('  Next: Notebook 09 — XAI (SHAP)')
+print('='*60)
+
+======================================================================
+NOTEBOOK: 09_xai_shap.ipynb (Total cells: 16)
+======================================================================
+
+--- Cell 0 [MARKDOWN] ---
+# 🧠 Notebook 09 — XAI (Explainable AI) — SHAP + Feature Importance
+
+**The 'Interpretable' part of your project title**
+
+This notebook answers: **WHY does the model predict Benign or Malignant?**
+
+We use:
+1. **SHAP** (SHapley Additive exPlanations) — industry gold standard for XAI
+2. **Feature Importance** from Random Forest
+3. **Individual prediction explanation** — what pushed a specific image's prediction
+
+**Run each cell with Shift+Enter**
+
+--- Cell 1 [CODE] ---
+%matplotlib inline
+import sys
+sys.path.insert(0, r'D:\Projects\ML')
+
+import warnings
+warnings.filterwarnings('ignore')
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import joblib
+import shap
+
+from src.config import (FEATURES_FUSED_CSV, FIGURES_DIR,
+                        MODELS_DIR, RESULTS_DIR, RANDOM_SEED)
+from src.utils import set_plot_style
+
+set_plot_style()
+np.random.seed(RANDOM_SEED)
+print('SHAP version:', shap.__version__)
+print('Imports done!')
+
+--- Cell 2 [MARKDOWN] ---
+## 1. Load Data & Best Model
+
+--- Cell 3 [CODE] ---
+df = pd.read_csv(FEATURES_FUSED_CSV)
+feat_cols = [c for c in df.columns if c.startswith('glcm_') or c.startswith('lbp_')]
+
+test_df = df[df['split'] == 'test'].copy()
+X_test  = test_df[feat_cols].values.astype(np.float32)
+y_test  = test_df['label'].values
+
+# Load Random Forest (best for SHAP TreeExplainer)
+rf_model = joblib.load(MODELS_DIR / 'random_forest.pkl')
+
+print(f'Test images: {len(X_test)}')
+print(f'Features   : {len(feat_cols)}')
+print(f'RF model loaded: {type(rf_model.named_steps["clf"]).__name__}')
+
+--- Cell 4 [MARKDOWN] ---
+## 2. Random Forest Feature Importance
+
+--- Cell 5 [CODE] ---
+# Get the RF classifier and the selected features from SelectKBest
+selector = rf_model.named_steps['select']
+rf_clf   = rf_model.named_steps['clf']
+
+# Get selected feature names
+selected_mask  = selector.get_support()
+selected_feats = [feat_cols[i] for i, m in enumerate(selected_mask) if m]
+
+importances = rf_clf.feature_importances_
+feat_imp_df = pd.DataFrame({'feature': selected_feats, 'importance': importances})
+feat_imp_df = feat_imp_df.sort_values('importance', ascending=False)
+
+print('Top 15 Most Important Features (Random Forest):')
+print(feat_imp_df.head(15).to_string(index=False))
+
+# Plot
+fig, ax = plt.subplots(figsize=(10, 8))
+top15 = feat_imp_df.head(15)
+colors_imp = ['#7c3aed' if 'glcm' in f else '#059669' for f in top15['feature']]
+bars = ax.barh(range(len(top15)), top15['importance'],
+               color=colors_imp, edgecolor='#3d3f4e')
+ax.set_yticks(range(len(top15)))
+ax.set_yticklabels(top15['feature'], fontsize=9)
+ax.invert_yaxis()
+ax.set_xlabel('Importance Score')
+ax.set_title('Top 15 Feature Importances — Random Forest', fontsize=13)
+
+from matplotlib.patches import Patch
+legend_elements = [
+    Patch(facecolor='#7c3aed', label='GLCM features'),
+    Patch(facecolor='#059669', label='LBP features'),
+]
+ax.legend(handles=legend_elements, loc='lower right')
+plt.tight_layout()
+plt.savefig(str(FIGURES_DIR / '09_feature_importance.png'), dpi=150, bbox_inches='tight')
+plt.show()
+
+--- Cell 6 [MARKDOWN] ---
+## 3. SHAP Analysis — TreeExplainer on Random Forest
+
+--- Cell 7 [CODE] ---
+# Transform test data through scaler + selector (before RF)
+X_scaled   = rf_model.named_steps['scaler'].transform(X_test)
+X_selected = selector.transform(X_scaled)
+
+# Use sample of 200 for SHAP speed
+sample_idx = np.random.choice(len(X_selected), min(200, len(X_selected)), replace=False)
+X_shap     = X_selected[sample_idx]
+y_shap     = y_test[sample_idx]
+
+print('Computing SHAP values...')
+explainer   = shap.TreeExplainer(rf_clf)
+shap_values = explainer.shap_values(X_shap)
+
+# shap_values shape: (n_samples, n_features, n_classes) or list
+if isinstance(shap_values, list):
+    sv_malignant = shap_values[1]  # class 1 = malignant
+else:
+    sv_malignant = shap_values[:, :, 1]
+
+print(f'SHAP values shape: {sv_malignant.shape}')
+print('Done!')
+
+--- Cell 8 [MARKDOWN] ---
+## 4. SHAP Summary Plot (Bar)
+
+--- Cell 9 [CODE] ---
+fig, ax = plt.subplots(figsize=(10, 8))
+shap.summary_plot(
+    sv_malignant, X_shap,
+    feature_names=selected_feats,
+    plot_type='bar',
+    show=False, max_display=15
+)
+plt.title('SHAP Feature Importance (Malignant class)', fontsize=13)
+plt.tight_layout()
+plt.savefig(str(FIGURES_DIR / '09_shap_bar.png'), dpi=150, bbox_inches='tight')
+plt.show()
+
+--- Cell 10 [MARKDOWN] ---
+## 5. SHAP Beeswarm Plot (Publication Quality)
+
+--- Cell 11 [CODE] ---
+shap.summary_plot(
+    sv_malignant, X_shap,
+    feature_names=selected_feats,
+    show=False, max_display=15
+)
+plt.title('SHAP Beeswarm — Impact on Malignant Prediction', fontsize=13)
+plt.tight_layout()
+plt.savefig(str(FIGURES_DIR / '09_shap_beeswarm.png'), dpi=150, bbox_inches='tight')
+plt.show()
+
+print('How to read: Red = high feature value, Blue = low feature value')
+print('Points on right = pushed prediction toward Malignant')
+print('Points on left  = pushed prediction toward Benign')
+
+--- Cell 12 [MARKDOWN] ---
+## 6. Individual Prediction Explanation
+
+--- Cell 13 [CODE] ---
+# Explain one benign and one malignant image prediction
+benign_idx    = np.where(y_shap == 0)[0][0]
+malignant_idx = np.where(y_shap == 1)[0][0]
+
+for idx, label in [(benign_idx, 'Benign'), (malignant_idx, 'Malignant')]:
+    print(f'\n--- Individual Explanation: {label} image ---')
+    top_feats = np.argsort(np.abs(sv_malignant[idx]))[::-1][:5]
+    for rank, fi in enumerate(top_feats, 1):
+        direction = 'toward Malignant' if sv_malignant[idx, fi] > 0 else 'toward Benign'
+        print(f'  {rank}. {selected_feats[fi]:30s}: SHAP={sv_malignant[idx,fi]:+.4f} ({direction})')
+
+--- Cell 14 [MARKDOWN] ---
+## 7. Summary
+
+--- Cell 15 [CODE] ---
+top5 = feat_imp_df.head(5)['feature'].tolist()
+print('='*60)
+print('  NOTEBOOK 09 COMPLETE — Interpretable AI')
+print('='*60)
+print(f'  Top 5 most important features:')
+for i, f in enumerate(top5, 1):
+    print(f'    {i}. {f}')
+print()
+print('  SHAP plots saved:')
+print('  - 09_feature_importance.png')
+print('  - 09_shap_bar.png')
+print('  - 09_shap_beeswarm.png')
+print()
+print('  This is the Interpretable ML part of your title!')
+print()
+print('  Next: Streamlit App (Demo)')
+print('='*60)

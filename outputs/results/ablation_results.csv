@@ -1,0 +1,7 @@
+Features,Classifier,N_Features,CV_F1,CV_F1_std,Test_Acc,Test_F1,Test_AUC
+GLCM Only,SVM,18,69.79,2.83,47.64,55.68,45.43
+GLCM Only,Random Forest,18,76.53,2.65,48.76,59.29,45.18
+LBP Only,SVM,54,77.34,4.14,48.16,55.7,49.04
+LBP Only,Random Forest,54,79.87,1.73,51.46,59.55,51.1
+GLCM + LBP,SVM,72,77.19,4.03,48.91,55.37,48.87
+GLCM + LBP,Random Forest,72,80.38,2.02,50.86,58.95,50.22

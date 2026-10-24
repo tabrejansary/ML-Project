@@ -1,0 +1,14 @@
+patient_id,class_name,label,subtype,n_images
+SOB_M_MC_14-10147,malignant,1,mucinous_carcinoma,64
+SOB_B_PT_14-21998AB,benign,0,phyllodes_tumor,235
+SOB_M_DC_14-17915,malignant,1,ductal_carcinoma,79
+SOB_B_TA_14-16184,benign,0,tubular_adenoma,132
+SOB_M_DC_14-11520,malignant,1,ductal_carcinoma,98
+SOB_M_DC_14-2980,malignant,1,ductal_carcinoma,84
+SOB_M_DC_14-14926,malignant,1,ductal_carcinoma,73
+SOB_M_MC_14-18842,malignant,1,mucinous_carcinoma,62
+SOB_M_PC_14-19440,malignant,1,papillary_carcinoma,142
+SOB_B_F_14-21998CD,benign,0,fibroadenoma,137
+SOB_M_DC_14-16448,malignant,1,ductal_carcinoma,53
+SOB_M_MC_14-13418DE,malignant,1,mucinous_carcinoma,55
+SOB_B_F_14-21998EF,benign,0,fibroadenoma,121
